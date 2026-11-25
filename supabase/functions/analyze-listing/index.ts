@@ -11,8 +11,12 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
-// KI-Zugang über OpenRouter (OpenAI-kompatible API). Modell per Secret OPENROUTER_MODEL änderbar.
-const DEFAULT_MODEL = "anthropic/claude-opus-5.5";
+import Anthropic from "npm:@anthropic-ai/sdk";
+
+// KI-Zugang: bevorzugt direkt bei Anthropic (Secret ANTHROPIC_API_KEY),
+// sonst über OpenRouter (Secret OPENROUTER_API_KEY).
+const ANTHROPIC_MODEL = "claude-opus-5-5";
+const DEFAULT_OPENROUTER_MODEL = "anthropic/claude-opus-5.5";
 
 type ContentPart =
   | { type: "text"; text: string }
@@ -411,10 +415,82 @@ type Analysis = {
   evaluation: Record<string, unknown>;
 };
 
+function parseJson(raw: string): Analysis {
+  const text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/, "").trim();
+  try {
+    return JSON.parse(text) as Analysis;
+  } catch {
+    throw new Error("Antwort der KI war kein gültiges JSON");
+  }
+}
+
 async function askClaude(content: ContentPart[]): Promise<Analysis> {
-  const apiKey = Deno.env.get("OPENROUTER_API_KEY");
-  if (!apiKey) throw new UserFacingError("OPENROUTER_API_KEY fehlt in den Supabase-Secrets.");
-  const model = Deno.env.get("OPENROUTER_MODEL") || DEFAULT_MODEL;
+  if (Deno.env.get("ANTHROPIC_API_KEY")) return askAnthropic(content);
+  if (Deno.env.get("OPENROUTER_API_KEY")) return askOpenRouter(content);
+  throw new UserFacingError("Kein KI-Schlüssel hinterlegt: ANTHROPIC_API_KEY in den Supabase-Secrets eintragen.");
+}
+
+async function askAnthropic(content: ContentPart[]): Promise<Analysis> {
+  const client = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
+
+  const blocks = content.map((p) =>
+    p.type === "file"
+      ? {
+        type: "document" as const,
+        source: {
+          type: "base64" as const,
+          media_type: "application/pdf" as const,
+          data: p.file.file_data.replace(/^data:application\/pdf;base64,/, ""),
+        },
+      }
+      : { type: "text" as const, text: p.text }
+  );
+
+  let msg: Anthropic.Beta.BetaMessage;
+  try {
+    const stream = client.beta.messages.stream({
+      model: ANTHROPIC_MODEL,
+      max_tokens: 32000,
+      betas: ["server-side-fallback-2026-07-01"],
+      // Falls die Anfrage abgelehnt wird, beantwortet ein Ersatzmodell sie automatisch.
+      fallbacks: "default",
+      thinking: { type: "adaptive" },
+      output_config: {
+        effort: "high",
+        format: { type: "json_schema", schema: OUTPUT_SCHEMA },
+      },
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: blocks }],
+    } as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming);
+    msg = await stream.finalMessage();
+  } catch (e) {
+    if (e instanceof Anthropic.AuthenticationError) {
+      throw new UserFacingError("Anthropic-Schlüssel ungültig (ANTHROPIC_API_KEY prüfen).");
+    }
+    if (e instanceof Anthropic.RateLimitError) {
+      throw new UserFacingError("Anthropic: Zu viele Anfragen – bitte gleich noch einmal versuchen.");
+    }
+    if (e instanceof Anthropic.APIError) {
+      if (/credit|billing|balance/i.test(e.message)) {
+        throw new UserFacingError("Anthropic-Guthaben aufgebraucht – bitte in der Console aufladen.");
+      }
+      throw new Error(`Anthropic ${e.status ?? ""}: ${e.message}`);
+    }
+    throw e;
+  }
+
+  if (msg.stop_reason === "refusal") throw new UserFacingError("Die KI hat die Analyse abgelehnt.");
+  if (msg.stop_reason === "max_tokens") throw new UserFacingError("Antwort der KI war zu lang (abgeschnitten).");
+  const text = msg.content
+    .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
+    .map((b) => b.text).join("");
+  if (!text) throw new UserFacingError("Leere Antwort der KI.");
+  return parseJson(text);
+}
+
+async function askOpenRouter(content: ContentPart[]): Promise<Analysis> {
+  const apiKey = Deno.env.get("OPENROUTER_API_KEY")!;
+  const model = Deno.env.get("OPENROUTER_MODEL") || DEFAULT_OPENROUTER_MODEL;
 
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
@@ -448,7 +524,7 @@ async function askClaude(content: ContentPart[]): Promise<Analysis> {
 
   const choice = data.choices?.[0];
   if (choice?.finish_reason === "length") throw new UserFacingError("Antwort der KI war zu lang (abgeschnitten).");
-  let text: string = typeof choice?.message?.content === "string"
+  const text: string = typeof choice?.message?.content === "string"
     ? choice.message.content
     : (choice?.message?.content ?? []).map((p: { text?: string }) => p.text ?? "").join("");
   if (!text) {
@@ -456,13 +532,7 @@ async function askClaude(content: ContentPart[]): Promise<Analysis> {
       choice?.message?.refusal ? `Die KI hat die Analyse abgelehnt: ${choice.message.refusal}` : "Leere Antwort der KI.",
     );
   }
-  // Falls doch Markdown-Codeblock drumherum
-  text = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/, "").trim();
-  try {
-    return JSON.parse(text) as Analysis;
-  } catch {
-    throw new Error("Antwort der KI war kein gültiges JSON");
-  }
+  return parseJson(text);
 }
 
 // ---------------------------------------------------------------------------
