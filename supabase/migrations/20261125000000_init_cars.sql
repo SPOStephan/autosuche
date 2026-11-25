@@ -63,3 +63,6 @@ create policy "own images write" on storage.objects for insert to authenticated
   with check (bucket_id = 'car-images' and (storage.foldername(name))[1] = (select auth.uid())::text);
 create policy "own images delete" on storage.objects for delete to authenticated
   using (bucket_id = 'car-images' and (storage.foldername(name))[1] = (select auth.uid())::text);
+
+-- Anhängerkupplung (Status aus der KI-Bewertung)
+alter table public.cars add column tow_hitch text;

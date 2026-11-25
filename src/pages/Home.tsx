@@ -20,10 +20,19 @@ export default function Home({ userId }: { userId: string }) {
   const [hover, setHover] = useState<string | null>(null);
   const [sort, setSort] = useState<SortKey>("neu");
   const [onlyFav, setOnlyFav] = useState(false);
+  const [ahkFilter, setAhkFilter] = useState<"alle" | "mit" | "mit_nachr">("alle");
 
   const shown = useMemo(
-    () => cars.filter((c) => !onlyFav || c.favorite).sort(sorters[sort]),
-    [cars, sort, onlyFav],
+    () =>
+      cars
+        .filter((c) => !onlyFav || c.favorite)
+        .filter((c) => {
+          if (ahkFilter === "alle" || c.status !== "done") return true;
+          if (ahkFilter === "mit") return c.tow_hitch === "vorhanden";
+          return c.tow_hitch === "vorhanden" || c.tow_hitch === "nachrüstbar";
+        })
+        .sort(sorters[sort]),
+    [cars, sort, onlyFav, ahkFilter],
   );
 
   return (
@@ -43,6 +52,16 @@ export default function Home({ userId }: { userId: string }) {
         <div className="flex items-center gap-2 px-4 py-1 text-xs text-slate-600">
           <span>{shown.length} Fahrzeuge</span>
           <span className="flex-1" />
+          <select
+            value={ahkFilter}
+            onChange={(e) => setAhkFilter(e.target.value as typeof ahkFilter)}
+            className="border rounded px-1 py-0.5 bg-white"
+            title="Anhängerkupplung"
+          >
+            <option value="alle">AHK: alle</option>
+            <option value="mit">nur mit AHK</option>
+            <option value="mit_nachr">mit oder nachrüstbar</option>
+          </select>
           <label className="flex items-center gap-1">
             <input type="checkbox" checked={onlyFav} onChange={(e) => setOnlyFav(e.target.checked)} /> ⭐ nur Favoriten
           </label>

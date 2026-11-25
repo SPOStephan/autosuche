@@ -1,6 +1,16 @@
 export type ChecklistItem = { item: string; why: string };
 export type KnownIssue = { issue: string; relevance: string };
 
+export type TowHitchStatus = "vorhanden" | "nachrüstbar" | "nicht nachrüstbar" | "unklar";
+
+export type TowHitch = {
+  status: TowHitchStatus;
+  type: string;
+  max_trailer_load_kg: number | null;
+  retrofit_cost_eur: number | null;
+  notes: string;
+};
+
 export type Evaluation = {
   score: number;
   verdict: string;
@@ -13,6 +23,7 @@ export type Evaluation = {
   questions_for_seller: string[];
   red_flags: string[];
   documents_to_check: string[];
+  tow_hitch?: TowHitch;
 };
 
 export type Vehicle = {
@@ -70,4 +81,5 @@ export type Car = {
   raw: { images?: string[] } | null;
   notes: string | null;
   favorite: boolean;
+  tow_hitch: TowHitchStatus | null;
 };

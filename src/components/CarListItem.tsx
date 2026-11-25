@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import type { Car } from "../lib/types";
-import { euro, km, scoreColor } from "../lib/format";
+import { euro, km, scoreColor, towHitchInfo } from "../lib/format";
 
 export default function CarListItem({ car, onHover }: { car: Car; onHover?: (id: string | null) => void }) {
   return (
@@ -34,6 +34,11 @@ export default function CarListItem({ car, onHover }: { car: Car; onHover?: (id:
             {car.city && <> · {car.city}</>}
             {car.lat == null && <span className="text-amber-600"> · kein Standort</span>}
           </div>
+        )}
+        {car.status === "done" && towHitchInfo(car.tow_hitch) && (
+          <span className={`inline-block mt-1 text-[11px] font-medium border rounded-full px-2 py-0.5 ${towHitchInfo(car.tow_hitch)!.cls}`}>
+            {towHitchInfo(car.tow_hitch)!.short}
+          </span>
         )}
       </div>
     </Link>

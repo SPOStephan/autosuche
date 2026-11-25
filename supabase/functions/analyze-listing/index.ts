@@ -190,6 +190,7 @@ async function processCar(admin: SupabaseClient, carId: string, userId: string) 
     image_url: imageUrl,
     vehicle: v,
     evaluation: result.evaluation,
+    tow_hitch: (result.evaluation.tow_hitch as { status?: string } | undefined)?.status ?? null,
     raw: structured ? { images: imageCandidates.slice(0, 30) } : null,
   }).eq("id", carId);
   if (upErr) throw upErr;
@@ -309,10 +310,19 @@ Du arbeitest gründlich, ehrlich und konkret: Du nennst typische Schwachstellen 
 beziehst Laufleistung, Alter, Preis, Ausstattung, Verkäufertyp und Anzeigentext ein und weist auf Ungereimtheiten in der Anzeige hin.
 Du erfindest keine Fakten über das konkrete Fahrzeug: Was in der Anzeige fehlt, kennzeichnest du als unbekannt bzw. als Frage an den Verkäufer.
 Allgemeines Modellwissen (bekannte Probleme, Wartungsintervalle, Rückrufe) darfst du verwenden, kennzeichne Unsicherheit aber ehrlich.
-Schreibe auf Deutsch, klar und ohne Floskeln.`;
+Schreibe auf Deutsch, klar und ohne Floskeln.
+
+Wichtig für diese Person: Eine Anhängerkupplung (AHK) ist ein zentrales Kriterium.
+- Fahrzeug MIT AHK: klarer Pluspunkt.
+- Fahrzeug OHNE AHK: deutlicher Minuspunkt in Note und Nachteilen. Er kann allenfalls durch einen entsprechend günstigeren Preis
+  teilweise ausgeglichen werden; rechne die Nachrüstkosten (Kupplung, fahrzeugspezifischer E-Satz, ggf. Codierung, Einbau) in die Preisbewertung
+  und das Verhandlungsziel ein.
+- Ohne AHK und NICHT nachrüstbar (z. B. keine zulässige Anhängelast eingetragen bzw. vom Hersteller nicht vorgesehen): gravierender Nachteil,
+  zusätzlich als Warnsignal aufführen und die Note stark abwerten.
+- Steht in der Anzeige nichts zur AHK, gilt sie als nicht vorhanden bzw. unklar; das muss als Frage an den Verkäufer auftauchen.`;
 
 const TASK_PROMPT = `Aufgabe:
-1. Extrahiere die Fahrzeugdaten aus der Anzeige in das Feld "vehicle". Unbekanntes = null. Preise und Zahlen als ganze Zahlen ohne Einheit.
+1. Extrahiere die Fahrzeugdaten aus der Anzeige in das Feld "vehicle". Unbekannte Zahlen/Ja-Nein-Werte = null, unbekannte Texte = "" (leerer String), unbekannter Verkäufertyp = "unbekannt". Preise und Zahlen als ganze Zahlen ohne Einheit.
    Erstzulassung im Format MM/JJJJ. PS ggf. aus kW umrechnen (kW × 1,36). Standort so genau wie in der Anzeige angegeben (PLZ, Ort, Straße).
 2. Bewerte das Angebot im Feld "evaluation":
    - score: Gesamtnote 1–10 (10 = hervorragendes Angebot), verdict: Urteil in einem kurzen Satz.
@@ -323,10 +333,22 @@ const TASK_PROMPT = `Aufgabe:
    - inspection_checklist: worauf bei der Besichtigung und Probefahrt unbedingt zu achten ist, speziell für dieses Fahrzeug, mit kurzer Begründung; nach Wichtigkeit sortiert.
    - questions_for_seller: Fragen, die man vorab telefonisch klären sollte.
    - red_flags: Warnsignale in der Anzeige (z. B. Unfallschaden, fehlendes Scheckheft, unplausible Angaben, Exportverdacht). Leer lassen, wenn keine.
-   - documents_to_check: Unterlagen, die man sich zeigen lassen sollte.`;
+   - documents_to_check: Unterlagen, die man sich zeigen lassen sollte.
+   - tow_hitch: Anhängerkupplung. status: "vorhanden", "nachrüstbar" (keine AHK, aber nachrüstbar), "nicht nachrüstbar" (keine AHK, Nachrüstung nicht möglich) oder "unklar",
+     type (Bauart laut Anzeige, z. B. "elektrisch schwenkbar", "abnehmbar", "starr"; "" wenn unbekannt), max_trailer_load_kg (zulässige Anhängelast
+     gebremst für dieses Modell/diese Motorisierung, null wenn unbekannt), retrofit_cost_eur (geschätzte Nachrüstkosten in der Werkstatt, null wenn
+     vorhanden oder nicht nachrüstbar), notes (Begründung, Hinweise zu Nachrüstbarkeit, Stützlast, was bei der Besichtigung zu prüfen ist).`;
 
-const str = { type: ["string", "null"] };
+// Hinweis: Die API erlaubt max. 16 Felder mit Union-Typen (z. B. "oder null").
+// Textfelder sind daher einfache Strings ("" = unbekannt) und werden danach in null umgewandelt.
+const str = { type: "string" };
 const int = { type: ["integer", "null"] };
+const bool = { type: ["boolean", "null"] };
+const TEXT_FIELDS = [
+  "make", "model", "variant", "first_registration", "fuel", "transmission", "body_type", "color",
+  "service_history", "hu_until", "seller_name", "seller_type", "zip", "city", "street", "country_code",
+] as const;
+const TOW_HITCH_STATUS = ["vorhanden", "nachrüstbar", "nicht nachrüstbar", "unklar"];
 
 const OUTPUT_SCHEMA = {
   type: "object",
@@ -345,12 +367,12 @@ const OUTPUT_SCHEMA = {
       properties: {
         title: { type: "string" },
         make: str, model: str, variant: str,
-        price_eur: int, price_negotiable: { type: ["boolean", "null"] },
+        price_eur: int, price_negotiable: bool,
         first_registration: str, mileage_km: int, power_kw: int, power_ps: int,
         fuel: str, transmission: str, body_type: str, color: str,
-        previous_owners: int, accident_free: { type: ["boolean", "null"] },
+        previous_owners: int, accident_free: bool,
         service_history: str, hu_until: str,
-        seller_name: str, seller_type: { anyOf: [{ type: "string", enum: ["Händler", "Privat"] }, { type: "null" }] },
+        seller_name: str, seller_type: { type: "string", enum: ["Händler", "Privat", "unbekannt"] },
         zip: str, city: str, street: str, country_code: str,
         equipment: { type: "array", items: { type: "string" } },
       },
@@ -360,7 +382,7 @@ const OUTPUT_SCHEMA = {
       additionalProperties: false,
       required: [
         "score", "verdict", "summary", "price_assessment", "pros", "cons", "model_known_issues",
-        "inspection_checklist", "questions_for_seller", "red_flags", "documents_to_check",
+        "inspection_checklist", "questions_for_seller", "red_flags", "documents_to_check", "tow_hitch",
       ],
       properties: {
         score: { type: "integer" },
@@ -399,6 +421,18 @@ const OUTPUT_SCHEMA = {
         questions_for_seller: { type: "array", items: { type: "string" } },
         red_flags: { type: "array", items: { type: "string" } },
         documents_to_check: { type: "array", items: { type: "string" } },
+        tow_hitch: {
+          type: "object",
+          additionalProperties: false,
+          required: ["status", "type", "max_trailer_load_kg", "retrofit_cost_eur", "notes"],
+          properties: {
+            status: { type: "string", enum: TOW_HITCH_STATUS },
+            type: { type: "string" },
+            max_trailer_load_kg: int,
+            retrofit_cost_eur: int,
+            notes: { type: "string" },
+          },
+        },
       },
     },
   },
@@ -417,11 +451,20 @@ type Analysis = {
 
 function parseJson(raw: string): Analysis {
   const text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/, "").trim();
+  let parsed: Analysis;
   try {
-    return JSON.parse(text) as Analysis;
+    parsed = JSON.parse(text) as Analysis;
   } catch {
     throw new Error("Antwort der KI war kein gültiges JSON");
   }
+  // "" bzw. "unbekannt" -> null, damit die App einheitlich "unbekannt" anzeigt
+  const v = parsed.vehicle as Record<string, unknown>;
+  for (const f of TEXT_FIELDS) {
+    const val = v[f];
+    if (typeof val !== "string" || !val.trim() || val.trim().toLowerCase() === "unbekannt") v[f] = null;
+    else v[f] = val.trim();
+  }
+  return parsed;
 }
 
 async function askClaude(content: ContentPart[]): Promise<Analysis> {

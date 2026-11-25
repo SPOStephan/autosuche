@@ -4,7 +4,7 @@ import { MapContainer, Marker, TileLayer } from "react-leaflet";
 import L from "leaflet";
 import { supabase } from "../lib/supabase";
 import { useCar } from "../lib/useCars";
-import { euro, km, scoreColor } from "../lib/format";
+import { euro, km, scoreColor, towHitchInfo } from "../lib/format";
 import type { Car } from "../lib/types";
 
 const pin = L.divIcon({
@@ -197,6 +197,22 @@ export default function CarDetail() {
               <p className="text-sm text-slate-700 mt-1">{e.summary}</p>
             </div>
           </section>
+
+          {e.tow_hitch && (() => {
+            const t = e.tow_hitch;
+            const info = towHitchInfo(t.status)!;
+            return (
+              <section className={`rounded-xl border-2 p-4 ${info.cls}`}>
+                <h2 className="font-semibold text-lg">🔗 {info.label}</h2>
+                <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm mt-1">
+                  {t.type && <span>Bauart: <b>{t.type}</b></span>}
+                  {t.max_trailer_load_kg != null && <span>Anhängelast gebremst: <b>{t.max_trailer_load_kg.toLocaleString("de-DE")} kg</b></span>}
+                  {t.retrofit_cost_eur != null && <span>Nachrüstung ca.: <b>{euro(t.retrofit_cost_eur)}</b></span>}
+                </div>
+                {t.notes && <p className="text-sm mt-2">{t.notes}</p>}
+              </section>
+            );
+          })()}
 
           {e.red_flags?.length > 0 && (
             <Section title="⚠️ Warnsignale" tone="red">

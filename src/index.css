@@ -21,3 +21,7 @@ html, body, #root { height: 100%; }
 .car-marker.fav .thumb { border-color: #f59e0b; }
 .car-marker.processing .thumb { opacity: .6; }
 .car-marker:hover .thumb { transform: scale(1.06); transition: transform .12s; }
+.car-marker .ahk {
+  margin-top: 2px; color: #fff; font: 600 10px/1.2 system-ui, sans-serif;
+  padding: 1px 6px; border-radius: 999px; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,.3);
+}

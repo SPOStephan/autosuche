@@ -3,19 +3,21 @@ import { MapContainer, Marker, TileLayer, Tooltip, useMap } from "react-leaflet"
 import L from "leaflet";
 import { useNavigate } from "react-router-dom";
 import type { Car } from "../lib/types";
-import { escapeHtml, euro, km } from "../lib/format";
+import { escapeHtml, euro, km, towHitchInfo } from "../lib/format";
 
 function icon(car: Car) {
   const img = car.image_url
     ? `<img src="${escapeHtml(car.image_url)}" alt="" loading="lazy" />`
     : "🚗";
   const cls = ["car-marker", car.favorite ? "fav" : "", car.status === "processing" ? "processing" : ""].join(" ");
+  const ahk = towHitchInfo(car.tow_hitch);
+  const ahkHtml = ahk ? `<div class="ahk" style="background:${ahk.color}">${escapeHtml(ahk.short)}</div>` : "";
   return L.divIcon({
     className: "",
-    html: `<div class="${cls}"><div class="thumb">${img}</div><div class="price">${escapeHtml(euro(car.price_eur))}</div></div>`,
-    iconSize: [84, 74],
-    iconAnchor: [42, 74],
-    tooltipAnchor: [0, -74],
+    html: `<div class="${cls}"><div class="thumb">${img}</div><div class="price">${escapeHtml(euro(car.price_eur))}</div>${ahkHtml}</div>`,
+    iconSize: [84, 90],
+    iconAnchor: [42, 90],
+    tooltipAnchor: [0, -90],
   });
 }
 
@@ -60,6 +62,7 @@ export default function CarMap({ cars, focusId }: { cars: Car[]; focusId?: strin
               {euro(car.price_eur)} · {km(car.mileage_km)} · {car.first_registration ?? "–"}
             </div>
             {car.evaluation && <div>KI-Note: {car.evaluation.score}/10</div>}
+            {towHitchInfo(car.tow_hitch) && <div>{towHitchInfo(car.tow_hitch)!.label}</div>}
           </Tooltip>
         </Marker>
       ))}
