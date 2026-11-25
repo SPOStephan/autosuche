@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import { useCars } from "../lib/useCars";
 import AddListing from "../components/AddListing";
 import CarMap from "../components/CarMap";
 import CarListItem from "../components/CarListItem";
 import type { Car } from "../lib/types";
+import { fillMissingLocations } from "../lib/geocode";
 
 type SortKey = "neu" | "note" | "preis" | "km";
 
@@ -17,6 +18,11 @@ const sorters: Record<SortKey, (a: Car, b: Car) => number> = {
 
 export default function Home({ userId }: { userId: string }) {
   const { cars, loading } = useCars();
+
+  // Fehlende Standorte im Browser nachtragen
+  useEffect(() => {
+    fillMissingLocations(cars);
+  }, [cars]);
   const [hover, setHover] = useState<string | null>(null);
   const [sort, setSort] = useState<SortKey>("neu");
   const [onlyFav, setOnlyFav] = useState(false);

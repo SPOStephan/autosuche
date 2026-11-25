@@ -654,23 +654,43 @@ async function storeImage(admin: SupabaseClient, userId: string, carId: string, 
 
 async function geocode(zip: string | null, city: string | null, street: string | null, country: string | null) {
   const cc = (country || "de").toLowerCase().slice(0, 2);
-  const attempts: Record<string, string>[] = [];
-  if (street && (zip || city)) attempts.push({ street, postalcode: zip ?? "", city: city ?? "" });
-  if (zip) attempts.push({ postalcode: zip, ...(city ? { city } : {}) });
-  if (zip) attempts.push({ postalcode: zip });
-  if (city) attempts.push({ city });
+  const queries: string[] = [];
+  if (street && (zip || city)) queries.push([street, zip, city].filter(Boolean).join(", "));
+  if (zip || city) queries.push([zip, city].filter(Boolean).join(" "));
+  if (city && zip) queries.push(city);
 
-  for (const a of attempts) {
-    const params = new URLSearchParams({ ...a, countrycodes: cc, format: "json", limit: "1" });
-    for (const [k, val] of [...params.entries()]) if (!val) params.delete(k);
+  for (const q of queries) {
+    // 1) OpenStreetMap Nominatim
     try {
+      const params = new URLSearchParams({ q, countrycodes: cc, format: "json", limit: "1" });
       const res = await fetch(`https://nominatim.openstreetmap.org/search?${params}`, {
         headers: { "User-Agent": "autosuche-private-app/1.0", "Accept-Language": "de" },
       });
-      if (!res.ok) continue;
-      const hits = await res.json();
-      if (Array.isArray(hits) && hits[0]) return { lat: Number(hits[0].lat), lng: Number(hits[0].lon) };
-    } catch { /* nächster Versuch */ }
+      if (res.ok) {
+        const hits = await res.json();
+        if (Array.isArray(hits) && hits[0]) return { lat: Number(hits[0].lat), lng: Number(hits[0].lon) };
+      } else {
+        console.warn("Nominatim", res.status, q);
+      }
+    } catch (e) {
+      console.warn("Nominatim Fehler", e);
+    }
+    // 2) Photon (komoot), ebenfalls OpenStreetMap-Daten
+    try {
+      const res = await fetch(`https://photon.komoot.io/api/?${new URLSearchParams({ q, limit: "5", lang: "de" })}`);
+      if (res.ok) {
+        const data = await res.json();
+        const f = (data?.features ?? []).find((x: { properties?: { countrycode?: string } }) =>
+          (x.properties?.countrycode ?? "").toLowerCase() === cc
+        ) ?? data?.features?.[0];
+        const c = f?.geometry?.coordinates;
+        if (Array.isArray(c)) return { lat: Number(c[1]), lng: Number(c[0]) };
+      } else {
+        console.warn("Photon", res.status, q);
+      }
+    } catch (e) {
+      console.warn("Photon Fehler", e);
+    }
     await new Promise((r) => setTimeout(r, 1100)); // Nominatim: max. 1 Anfrage/Sekunde
   }
   return null;
