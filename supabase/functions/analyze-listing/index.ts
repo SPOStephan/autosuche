@@ -236,7 +236,7 @@ async function fetchListing(url: string): Promise<FetchedListing> {
           description: stripHtml(ld.description ?? ""),
           prices: ld.prices,
           price: ld.price,
-          vehicle: ld.vehicle,
+          vehicle: cleanVehicle(ld.vehicle),
           location: ld.location,
           seller: ld.seller
             ? { type: ld.seller.type, isDealer: ld.seller.isDealer, companyName: ld.seller.companyName }
@@ -285,6 +285,29 @@ async function fetchListing(url: string): Promise<FetchedListing> {
   };
 }
 
+// autoscout24-Fahrzeugdaten lesbarer machen: Ausstattung je Kategorie als Liste, leere Felder und Rohdaten-Dubletten raus
+function cleanVehicle(v: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, val] of Object.entries(v ?? {})) {
+    if (k === "rawData") continue;
+    if (val === null || val === "" || (Array.isArray(val) && val.length === 0)) continue;
+    out[k] = val;
+  }
+  const eq = v?.equipment as Record<string, { id?: string; categoryName?: string }[]> | undefined;
+  if (eq && typeof eq === "object") {
+    const flat: Record<string, string[]> = {};
+    for (const items of Object.values(eq)) {
+      if (!Array.isArray(items)) continue;
+      for (const it of items) {
+        const cat = it?.categoryName ?? "Sonstiges";
+        if (it?.id) (flat[cat] ??= []).push(it.id);
+      }
+    }
+    out.equipment = flat;
+  }
+  return out;
+}
+
 function stripHtml(s: string): string {
   return s
     .replace(/<br\s*\/?>/gi, "\n")
@@ -319,7 +342,11 @@ Wichtig für diese Person: Eine Anhängerkupplung (AHK) ist ein zentrales Kriter
   und das Verhandlungsziel ein.
 - Ohne AHK und NICHT nachrüstbar (z. B. keine zulässige Anhängelast eingetragen bzw. vom Hersteller nicht vorgesehen): gravierender Nachteil,
   zusätzlich als Warnsignal aufführen und die Note stark abwerten.
-- Steht in der Anzeige nichts zur AHK, gilt sie als nicht vorhanden bzw. unklar; das muss als Frage an den Verkäufer auftauchen.`;
+- Steht in der Anzeige nichts zur AHK, gilt sie als nicht vorhanden bzw. unklar; das muss als Frage an den Verkäufer auftauchen.
+
+Zu den Anzeigendaten: Portale wie autoscout24 liefern Ausstattung, Historie (HU, Halter, Scheckheft, Unfall), Technik usw. als strukturierte Felder.
+Diese Felder SIND die Anzeigeninhalte (auf der Website teils hinter "Mehr anzeigen" verborgen). Ein fehlender Freitext des Verkäufers
+ist nur ein kleiner Hinweis (dann gezielt nachfragen), aber kein Warnsignal und nicht als "Anzeige leer" zu bezeichnen.`;
 
 const TASK_PROMPT = `Aufgabe:
 1. Extrahiere die Fahrzeugdaten aus der Anzeige in das Feld "vehicle". Unbekannte Zahlen/Ja-Nein-Werte = null, unbekannte Texte = "" (leerer String), unbekannter Verkäufertyp = "unbekannt". Preise und Zahlen als ganze Zahlen ohne Einheit.
@@ -339,8 +366,7 @@ const TASK_PROMPT = `Aufgabe:
      gebremst für dieses Modell/diese Motorisierung, null wenn unbekannt), retrofit_cost_eur (geschätzte Nachrüstkosten in der Werkstatt, null wenn
      vorhanden oder nicht nachrüstbar), notes (Begründung, Hinweise zu Nachrüstbarkeit, Stützlast, was bei der Besichtigung zu prüfen ist).`;
 
-// Hinweis: Die API erlaubt max. 16 Felder mit Union-Typen (z. B. "oder null").
-// Textfelder sind daher einfache Strings ("" = unbekannt) und werden danach in null umgewandelt.
+// Textfelder: "" = unbekannt, wird nach dem Parsen in null umgewandelt.
 const str = { type: "string" };
 const int = { type: ["integer", "null"] };
 const bool = { type: ["boolean", "null"] };
@@ -449,14 +475,39 @@ type Analysis = {
   evaluation: Record<string, unknown>;
 };
 
+// Das Schema wird als Vorgabe im Prompt mitgegeben (kein "strict"-Modus: dafür ist es zu umfangreich)
+// und die Antwort hier geprüft/ergänzt.
+const JSON_INSTRUCTIONS = `Antworte AUSSCHLIESSLICH mit einem einzigen JSON-Objekt (ohne Markdown, ohne Text davor oder danach),
+das exakt diesem JSON-Schema entspricht:
+${JSON.stringify(OUTPUT_SCHEMA)}`;
+
+class ParseError extends Error {}
+
 function parseJson(raw: string): Analysis {
-  const text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/, "").trim();
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new ParseError("Antwort der KI enthielt kein JSON");
   let parsed: Analysis;
   try {
-    parsed = JSON.parse(text) as Analysis;
+    parsed = JSON.parse(raw.slice(start, end + 1)) as Analysis;
   } catch {
-    throw new Error("Antwort der KI war kein gültiges JSON");
+    throw new ParseError("Antwort der KI war kein gültiges JSON");
   }
+  if (!parsed?.vehicle || !parsed?.evaluation || typeof parsed.vehicle.title !== "string") {
+    throw new ParseError("Antwort der KI war unvollständig");
+  }
+  const e = parsed.evaluation as Record<string, unknown>;
+  for (const k of ["pros", "cons", "model_known_issues", "inspection_checklist", "questions_for_seller", "red_flags", "documents_to_check"]) {
+    if (!Array.isArray(e[k])) e[k] = [];
+  }
+  e.score = Math.min(10, Math.max(1, Math.round(Number(e.score) || 5)));
+  if (!e.price_assessment) e.price_assessment = { rating: "unklar", explanation: "", negotiation_target_eur: null };
+  const th = e.tow_hitch as Record<string, unknown> | undefined;
+  if (!th || !TOW_HITCH_STATUS.includes(String(th.status))) {
+    e.tow_hitch = { status: "unklar", type: "", max_trailer_load_kg: null, retrofit_cost_eur: null, notes: "", ...(th ?? {}) };
+    (e.tow_hitch as Record<string, unknown>).status = "unklar";
+  }
+  if (!Array.isArray((parsed.vehicle as Record<string, unknown>).equipment)) parsed.vehicle.equipment = [];
   // "" bzw. "unbekannt" -> null, damit die App einheitlich "unbekannt" anzeigt
   const v = parsed.vehicle as Record<string, unknown>;
   for (const f of TEXT_FIELDS) {
@@ -468,12 +519,23 @@ function parseJson(raw: string): Analysis {
 }
 
 async function askClaude(content: ContentPart[]): Promise<Analysis> {
-  if (Deno.env.get("ANTHROPIC_API_KEY")) return askAnthropic(content);
-  if (Deno.env.get("OPENROUTER_API_KEY")) return askOpenRouter(content);
-  throw new UserFacingError("Kein KI-Schlüssel hinterlegt: ANTHROPIC_API_KEY in den Supabase-Secrets eintragen.");
+  const ask = Deno.env.get("ANTHROPIC_API_KEY")
+    ? askAnthropic
+    : Deno.env.get("OPENROUTER_API_KEY")
+    ? askOpenRouter
+    : null;
+  if (!ask) throw new UserFacingError("Kein KI-Schlüssel hinterlegt: ANTHROPIC_API_KEY in den Supabase-Secrets eintragen.");
+  const full: ContentPart[] = [...content, { type: "text", text: JSON_INSTRUCTIONS }];
+  try {
+    return parseJson(await ask(full));
+  } catch (e) {
+    if (!(e instanceof ParseError)) throw e;
+    console.warn("JSON ungültig, zweiter Versuch:", e.message);
+    return parseJson(await ask(full)); // ein zweiter Versuch
+  }
 }
 
-async function askAnthropic(content: ContentPart[]): Promise<Analysis> {
+async function askAnthropic(content: ContentPart[]): Promise<string> {
   const client = new Anthropic({ apiKey: Deno.env.get("ANTHROPIC_API_KEY")! });
 
   const blocks = content.map((p) =>
@@ -498,10 +560,7 @@ async function askAnthropic(content: ContentPart[]): Promise<Analysis> {
       // Falls die Anfrage abgelehnt wird, beantwortet ein Ersatzmodell sie automatisch.
       fallbacks: "default",
       thinking: { type: "adaptive" },
-      output_config: {
-        effort: "high",
-        format: { type: "json_schema", schema: OUTPUT_SCHEMA },
-      },
+      output_config: { effort: "high" },
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: blocks }],
     } as unknown as Anthropic.Beta.Messages.MessageCreateParamsStreaming);
@@ -528,10 +587,10 @@ async function askAnthropic(content: ContentPart[]): Promise<Analysis> {
     .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
     .map((b) => b.text).join("");
   if (!text) throw new UserFacingError("Leere Antwort der KI.");
-  return parseJson(text);
+  return text;
 }
 
-async function askOpenRouter(content: ContentPart[]): Promise<Analysis> {
+async function askOpenRouter(content: ContentPart[]): Promise<string> {
   const apiKey = Deno.env.get("OPENROUTER_API_KEY")!;
   const model = Deno.env.get("OPENROUTER_MODEL") || DEFAULT_OPENROUTER_MODEL;
 
@@ -546,10 +605,6 @@ async function askOpenRouter(content: ContentPart[]): Promise<Analysis> {
       model,
       max_tokens: 32000,
       reasoning: { effort: "high" },
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "fahrzeug_analyse", strict: true, schema: OUTPUT_SCHEMA },
-      },
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content },
@@ -575,7 +630,7 @@ async function askOpenRouter(content: ContentPart[]): Promise<Analysis> {
       choice?.message?.refusal ? `Die KI hat die Analyse abgelehnt: ${choice.message.refusal}` : "Leere Antwort der KI.",
     );
   }
-  return parseJson(text);
+  return text;
 }
 
 // ---------------------------------------------------------------------------
