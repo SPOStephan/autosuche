@@ -11,9 +11,12 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
-import Anthropic from "npm:@anthropic-ai/sdk";
+// KI-Zugang über OpenRouter (OpenAI-kompatible API). Modell per Secret OPENROUTER_MODEL änderbar.
+const DEFAULT_MODEL = "anthropic/claude-opus-5.5";
 
-const MODEL = "claude-opus-5-5";
+type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "file"; file: { filename: string; file_data: string } };
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -118,7 +121,7 @@ async function processCar(admin: SupabaseClient, carId: string, userId: string) 
   if (error || !car) throw new Error("Fahrzeug nicht gefunden");
 
   // 1) Quelle einlesen ------------------------------------------------------
-  const content: Anthropic.Beta.BetaContentBlockParam[] = [];
+  const content: ContentPart[] = [];
   let structured: Record<string, unknown> | null = null;
   let imageCandidates: string[] = [];
   let coords: { lat: number; lng: number } | null = null;
@@ -128,8 +131,8 @@ async function processCar(admin: SupabaseClient, carId: string, userId: string) 
     if (dlErr || !file) throw new UserFacingError("PDF konnte nicht geladen werden.");
     const b64 = base64(new Uint8Array(await file.arrayBuffer()));
     content.push({
-      type: "document",
-      source: { type: "base64", media_type: "application/pdf", data: b64 },
+      type: "file",
+      file: { filename: "anzeige.pdf", file_data: `data:application/pdf;base64,${b64}` },
     });
     content.push({
       type: "text",
@@ -408,33 +411,53 @@ type Analysis = {
   evaluation: Record<string, unknown>;
 };
 
-async function askClaude(content: Anthropic.Beta.BetaContentBlockParam[]): Promise<Analysis> {
-  const apiKey = Deno.env.get("ANTHROPIC_API_KEY");
-  if (!apiKey) throw new UserFacingError("ANTHROPIC_API_KEY fehlt in den Supabase-Secrets.");
-  const client = new Anthropic({ apiKey });
+async function askClaude(content: ContentPart[]): Promise<Analysis> {
+  const apiKey = Deno.env.get("OPENROUTER_API_KEY");
+  if (!apiKey) throw new UserFacingError("OPENROUTER_API_KEY fehlt in den Supabase-Secrets.");
+  const model = Deno.env.get("OPENROUTER_MODEL") || DEFAULT_MODEL;
 
-  const stream = client.beta.messages.stream({
-    model: MODEL,
-    max_tokens: 32000,
-    betas: ["server-side-fallback-2026-07-01"],
-    // Falls die Anfrage abgelehnt wird, beantwortet ein Ersatzmodell sie automatisch.
-    fallbacks: "default",
-    thinking: { type: "adaptive" },
-    output_config: {
-      effort: "high",
-      format: { type: "json_schema", schema: OUTPUT_SCHEMA },
+  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "X-Title": "Autosuche",
     },
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content }],
-  } as Anthropic.Beta.MessageCreateParamsStreaming);
+    body: JSON.stringify({
+      model,
+      max_tokens: 32000,
+      reasoning: { effort: "high" },
+      response_format: {
+        type: "json_schema",
+        json_schema: { name: "fahrzeug_analyse", strict: true, schema: OUTPUT_SCHEMA },
+      },
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content },
+      ],
+    }),
+  });
 
-  const msg = await stream.finalMessage();
-  if (msg.stop_reason === "refusal") throw new UserFacingError("Die KI hat die Analyse abgelehnt.");
-  if (msg.stop_reason === "max_tokens") throw new UserFacingError("Antwort der KI war zu lang (abgeschnitten).");
+  const data = await res.json().catch(() => null);
+  if (!res.ok || !data || data.error) {
+    const msg = data?.error?.message ?? `HTTP ${res.status}`;
+    if (res.status === 401) throw new UserFacingError("OpenRouter-Schlüssel ungültig (OPENROUTER_API_KEY prüfen).");
+    if (res.status === 402) throw new UserFacingError("OpenRouter-Guthaben aufgebraucht – bitte unter openrouter.ai aufladen.");
+    throw new Error(`OpenRouter: ${msg}`);
+  }
 
-  const text = msg.content
-    .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-    .map((b) => b.text).join("");
+  const choice = data.choices?.[0];
+  if (choice?.finish_reason === "length") throw new UserFacingError("Antwort der KI war zu lang (abgeschnitten).");
+  let text: string = typeof choice?.message?.content === "string"
+    ? choice.message.content
+    : (choice?.message?.content ?? []).map((p: { text?: string }) => p.text ?? "").join("");
+  if (!text) {
+    throw new UserFacingError(
+      choice?.message?.refusal ? `Die KI hat die Analyse abgelehnt: ${choice.message.refusal}` : "Leere Antwort der KI.",
+    );
+  }
+  // Falls doch Markdown-Codeblock drumherum
+  text = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```$/, "").trim();
   try {
     return JSON.parse(text) as Analysis;
   } catch {
