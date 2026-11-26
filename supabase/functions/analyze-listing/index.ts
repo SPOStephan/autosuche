@@ -521,18 +521,32 @@ type PersonalFit = {
 
 const FIT_GUIDE = `Die persönliche Eignung (personal_fit) ist eine ZWEITE, getrennte Note 1–10: Wie gut passt genau dieses Fahrzeug
 zum Nutzungsprofil der Käufer? Sie ist unabhängig davon, ob der Preis gut ist (das bewertet die erste Note).
-Berücksichtige insbesondere:
-- Anhängerbetrieb: zulässige Anhängelast gebremst und Stützlast im Verhältnis zum geforderten Gewicht (mit sinnvoller Reserve),
-  Motorleistung/Drehmoment, Getriebe (Wandlerautomatik/DSG/Schaltgetriebe unter Anhängerlast), Allrad bei Wiese/Feldweg/Stall,
-  Vorhandensein bzw. Nachrüstbarkeit der AHK.
-- Kurzstrecke: Eignung des Antriebs (z. B. Diesel mit Partikelfilter/AdBlue bei viel Kurzstrecke, Steuerkette/Zahnriemen, Batterie),
-  aber auch, ob regelmäßige lange Autobahnfahrten das ausgleichen.
-- Langstrecke: Komfort, Verbrauch, Tankreichweite, Assistenzsysteme.
-- Zuverlässigkeit: bekannte Schwachstellen dieses Modells/Motors/Getriebes bei der aktuellen Laufleistung und unter Anhängerlast,
-  zu erwartende Reparaturen und Unterhaltskosten.
-- Fehlende AHK ist ein deutlicher Abzug; nicht nachrüstbar oder zu geringe Anhängelast macht das Fahrzeug praktisch ungeeignet (Note 1–3).
-Felder: score, verdict (ein Satz), summary (3–5 Sätze), strengths (was für dieses Profil passt), concerns (was dagegen spricht),
-checks (was ihr für euren Einsatzzweck konkret prüfen bzw. fragen solltet, z. B. Anhängelast im Fahrzeugschein, Probefahrt mit Last).`;
+
+Maßstab (wichtig, damit die Note fair ist):
+- Bewerte relativ zu dem, was in dieser Preis- und Altersklasse realistisch erhältlich ist, nicht im Vergleich zu einem Neuwagen.
+  Normale Alters- und Laufleistungsrisiken, die praktisch jedes Auto dieser Klasse hat, sind KEIN Abzug bei der Eignung
+  (die stecken schon in der Angebotsnote). Abzug nur, wenn dieses Modell/dieser Motor/diese Laufleistung für das Profil
+  deutlich schlechter ist als typische Alternativen in derselben Preisklasse.
+- Skala: 9–10 = passt hervorragend, kaum Kompromisse; 7–8 = passt gut, kleinere Abstriche; 5–6 = brauchbar mit spürbaren Kompromissen;
+  3–4 = passt schlecht; 1–2 = ungeeignet. Ein solides, typisches Zugfahrzeug mit AHK und ausreichender Anhängelast landet bei 7–8.
+- Bewerte nur, was im Profil steht. Erfinde keine zusätzlichen Anforderungen (z. B. Wiese/Feldweg/Allrad, Abstandstempomat,
+  Kofferraumgröße), außer das Profil nennt sie. Solche Punkte dürfen höchstens als Hinweis in "checks" stehen, nicht die Note senken.
+- Allgemeine Hinweise, die für jedes Auto gelten (Führerscheinklasse, Gespann-Tempo 100, Wiegen des Anhängers), gehören in "checks",
+  nicht in "concerns", und senken die Note nicht.
+
+Kriterien:
+- Anhängerbetrieb: zulässige Anhängelast gebremst muss das genannte Gewicht abdecken. Liegt sie mindestens ca. 10 % darüber, ist das
+  ausreichend (kein Abzug); genau am Limit = kleiner Abzug; darunter = ungeeignet (Note 1–3). Dazu Stützlast, Motorleistung/Drehmoment,
+  Getriebe unter Anhängerlast, Vorhandensein bzw. Nachrüstbarkeit der AHK (fehlende AHK = deutlicher Abzug, nicht nachrüstbar = ungeeignet).
+- Kurzstrecke: Eignung des Antriebs (z. B. Diesel mit Partikelfilter/AdBlue bei viel Kurzstrecke), unter Berücksichtigung der genannten
+  regelmäßigen Langstrecken, die das teilweise ausgleichen.
+- Langstrecke: Komfort, Verbrauch, Reichweite.
+- Zuverlässigkeit: modellspezifische Schwachstellen, die über das Klassenübliche hinausgehen oder durch das Profil (Anhänger, Kurzstrecke)
+  besonders getroffen werden.
+
+Felder: score, verdict (ein Satz), summary (3–5 Sätze), strengths (was für dieses Profil passt), concerns (höchstens 6, nur die für das
+Profil wirklich relevanten, wichtigste zuerst), checks (was konkret zu prüfen bzw. zu fragen ist, z. B. Anhängelast im Fahrzeugschein,
+Probefahrt mit Last, allgemeine Hinweise).`;
 
 function fitTaskPrompt(profile: string) {
   return `Nutzungsprofil der Käufer (in eigenen Worten):
