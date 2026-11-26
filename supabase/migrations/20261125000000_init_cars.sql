@@ -88,15 +88,15 @@ create table public.members (
   added_at timestamptz not null default now()
 );
 alter table public.members enable row level security;
-create policy "members read members" on public.members for select to authenticated
-  using (exists (select 1 from public.members m where m.user_id = (select auth.uid())));
-
 create or replace function public.is_member() returns boolean
 language sql stable security definer set search_path = '' as $$
   select exists (select 1 from public.members where user_id = (select auth.uid()));
 $$;
 revoke all on function public.is_member() from public, anon;
 grant execute on function public.is_member() to authenticated;
+-- über is_member() (security definer), sonst Endlos-Rekursion in der Policy
+create policy "members read members" on public.members for select to authenticated
+  using ((select public.is_member()));
 
 drop policy "own cars select" on public.cars;
 drop policy "own cars insert" on public.cars;
