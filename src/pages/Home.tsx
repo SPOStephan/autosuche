@@ -65,7 +65,7 @@ export default function Home({ userId }: { userId: string }) {
           </h1>
           <div className="flex items-center gap-3 text-xs">
             <Link to="/profil" className="text-blue-700 hover:underline">Unser Profil</Link>
-            <button onClick={() => supabase.auth.signOut()} className="text-slate-500 hover:text-slate-800">
+            <button onClick={() => supabase.auth.signOut({ scope: "local" })} className="text-slate-500 hover:text-slate-800">
               Abmelden
             </button>
           </div>

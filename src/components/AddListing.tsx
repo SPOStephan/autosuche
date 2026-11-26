@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { invokeAnalyze } from "../lib/invoke";
 
 export default function AddListing({ userId, onAdded }: { userId: string; onAdded?: (id: string) => void }) {
   const [url, setUrl] = useState("");
@@ -35,10 +36,7 @@ export default function AddListing({ userId, onAdded }: { userId: string; onAdde
         }
       }
       setBusy("Analyse wird gestartet …");
-      const { data, error } = await supabase.functions.invoke("analyze-listing", {
-        body: { url: url.trim() || undefined, pdf_path, image_path },
-      });
-      if (error) throw error;
+      const data = await invokeAnalyze<{ id: string }>({ url: url.trim() || undefined, pdf_path, image_path });
       setUrl("");
       setFile(null);
       if (fileRef.current) fileRef.current.value = "";

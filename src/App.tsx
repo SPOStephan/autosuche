@@ -36,7 +36,7 @@ export default function App() {
       <div className="p-8 max-w-md mx-auto text-center space-y-3">
         <p className="font-medium">Dieses Konto ist (noch) nicht freigeschaltet.</p>
         <p className="text-sm text-slate-500">{session.user.email}</p>
-        <button onClick={() => supabase.auth.signOut()} className="text-sm text-blue-700 underline">Abmelden</button>
+        <button onClick={() => supabase.auth.signOut({ scope: "local" })} className="text-sm text-blue-700 underline">Abmelden</button>
       </div>
     );
   }

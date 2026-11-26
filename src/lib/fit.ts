@@ -1,4 +1,5 @@
 import { supabase } from "./supabase";
+import { invokeAnalyze } from "./invoke";
 import type { Car } from "./types";
 
 // Gemeinsames Profil (eine Zeile für alle Mitglieder)
@@ -14,16 +15,8 @@ export async function saveProfileText(text: string) {
 
 /** Bewertet die persönliche Eignung eines bereits analysierten Autos (neu). */
 export async function assessFit(carId: string): Promise<number> {
-  const { data, error } = await supabase.functions.invoke("analyze-listing", { body: { id: carId, fit_only: true } });
-  if (error) {
-    let msg = error.message;
-    try {
-      const body = await (error as { context?: Response }).context?.json();
-      if (body?.error) msg = body.error;
-    } catch { /* Standardmeldung */ }
-    throw new Error(msg);
-  }
-  return data.fit_score as number;
+  const data = await invokeAnalyze<{ fit_score: number }>({ id: carId, fit_only: true });
+  return data.fit_score;
 }
 
 /** Mehrere Autos nacheinander bewerten (je 2 gleichzeitig). */

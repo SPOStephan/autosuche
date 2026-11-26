@@ -6,6 +6,7 @@ import { supabase } from "../lib/supabase";
 import { useCar } from "../lib/useCars";
 import { euro, km, scoreColor, towHitchInfo } from "../lib/format";
 import { assessFit } from "../lib/fit";
+import { invokeAnalyze } from "../lib/invoke";
 import type { Car } from "../lib/types";
 
 const pin = L.divIcon({
@@ -113,8 +114,11 @@ export default function CarDetail() {
 
   async function reanalyze() {
     setCar({ ...car!, status: "processing", error: null });
-    const { error } = await supabase.functions.invoke("analyze-listing", { body: { id: car!.id } });
-    if (error) alert(error.message);
+    try {
+      await invokeAnalyze({ id: car!.id });
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function rateFit() {
