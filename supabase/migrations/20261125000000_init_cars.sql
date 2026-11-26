@@ -66,3 +66,18 @@ create policy "own images delete" on storage.objects for delete to authenticated
 
 -- Anhängerkupplung (Status aus der KI-Bewertung)
 alter table public.cars add column tow_hitch text;
+
+-- Persönliche Eignung + Nutzungsprofil
+alter table public.cars add column fit_score integer;
+
+create table public.profiles (
+  user_id uuid primary key default auth.uid() references auth.users(id) on delete cascade,
+  profile_text text not null default '',
+  updated_at timestamptz not null default now()
+);
+alter table public.profiles enable row level security;
+create policy "own profile select" on public.profiles for select to authenticated using (user_id = (select auth.uid()));
+create policy "own profile insert" on public.profiles for insert to authenticated with check (user_id = (select auth.uid()));
+create policy "own profile update" on public.profiles for update to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+create trigger profiles_touch before update on public.profiles
+for each row execute function public.touch_updated_at();

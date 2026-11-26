@@ -5,6 +5,7 @@
 // Aufruf (mit Login-Token):
 //   POST { url?: string, pdf_path?: string, image_path?: string }  -> neues Fahrzeug
 //   POST { id: string }                                           -> erneut analysieren
+//   POST { id: string, fit_only: true }                           -> nur persönliche Eignung (neu) bewerten
 //
 // Die eigentliche Analyse läuft im Hintergrund (EdgeRuntime.waitUntil);
 // die App bekommt sofort die ID zurück und sieht den Fortschritt per Realtime.
@@ -58,7 +59,7 @@ Deno.serve(async (req) => {
   if (userErr || !userData.user) return json({ error: "Nicht angemeldet" }, 401);
   const userId = userData.user.id;
 
-  let body: { id?: string; url?: string; pdf_path?: string; image_path?: string };
+  let body: { id?: string; url?: string; pdf_path?: string; image_path?: string; fit_only?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -66,6 +67,25 @@ Deno.serve(async (req) => {
   }
 
   let carId: string;
+
+  if (body.id && body.fit_only) {
+    const { data: car, error } = await admin.from("cars").select("*").eq("id", body.id).single();
+    if (error || !car || car.user_id !== userId) return json({ error: "Nicht gefunden" }, 404);
+    if (car.status !== "done" || !car.vehicle || !car.evaluation) {
+      return json({ error: "Fahrzeug ist noch nicht fertig analysiert" }, 409);
+    }
+    const profile = await loadProfile(admin, userId);
+    if (!profile) return json({ error: "Kein Nutzungsprofil hinterlegt" }, 400);
+    try {
+      const fit = await assessFit(car, profile);
+      const evaluation = { ...car.evaluation, personal_fit: fit };
+      await admin.from("cars").update({ evaluation, fit_score: fit.score }).eq("id", car.id);
+      return json({ id: car.id, fit_score: fit.score });
+    } catch (e) {
+      console.error("fit failed", e);
+      return json({ error: e instanceof Error ? e.message : String(e) }, 500);
+    }
+  }
 
   if (body.id) {
     const { data: car, error } = await admin
@@ -155,10 +175,12 @@ async function processCar(admin: SupabaseClient, carId: string, userId: string) 
     throw new UserFacingError("Weder Link noch PDF vorhanden.");
   }
 
+  const profile = await loadProfile(admin, userId);
   content.push({ type: "text", text: TASK_PROMPT });
+  if (profile) content.push({ type: "text", text: fitTaskPrompt(profile) });
 
   // 2) Claude: Daten extrahieren + bewerten -------------------------------
-  const result = await askClaude(content);
+  const result = await askClaude(content, !!profile);
   const v = result.vehicle;
 
   // 3) Bild ----------------------------------------------------------------
@@ -191,6 +213,7 @@ async function processCar(admin: SupabaseClient, carId: string, userId: string) 
     vehicle: v,
     evaluation: result.evaluation,
     tow_hitch: (result.evaluation.tow_hitch as { status?: string } | undefined)?.status ?? null,
+    fit_score: (result.evaluation.personal_fit as { score?: number } | undefined)?.score ?? null,
     raw: structured ? { images: imageCandidates.slice(0, 30) } : null,
   }).eq("id", carId);
   if (upErr) throw upErr;
@@ -464,6 +487,129 @@ const OUTPUT_SCHEMA = {
   },
 };
 
+const PERSONAL_FIT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["score", "verdict", "summary", "strengths", "concerns", "checks"],
+  properties: {
+    score: { type: "integer" },
+    verdict: { type: "string" },
+    summary: { type: "string" },
+    strengths: { type: "array", items: { type: "string" } },
+    concerns: { type: "array", items: { type: "string" } },
+    checks: { type: "array", items: { type: "string" } },
+  },
+};
+
+function schemaWithFit() {
+  const sch = structuredClone(OUTPUT_SCHEMA) as {
+    properties: { evaluation: { required: string[]; properties: Record<string, unknown> } };
+  };
+  sch.properties.evaluation.required.push("personal_fit");
+  sch.properties.evaluation.properties.personal_fit = PERSONAL_FIT_SCHEMA;
+  return sch;
+}
+
+type PersonalFit = {
+  score: number;
+  verdict: string;
+  summary: string;
+  strengths: string[];
+  concerns: string[];
+  checks: string[];
+};
+
+const FIT_GUIDE = `Die persönliche Eignung (personal_fit) ist eine ZWEITE, getrennte Note 1–10: Wie gut passt genau dieses Fahrzeug
+zum Nutzungsprofil der Käufer? Sie ist unabhängig davon, ob der Preis gut ist (das bewertet die erste Note).
+Berücksichtige insbesondere:
+- Anhängerbetrieb: zulässige Anhängelast gebremst und Stützlast im Verhältnis zum geforderten Gewicht (mit sinnvoller Reserve),
+  Motorleistung/Drehmoment, Getriebe (Wandlerautomatik/DSG/Schaltgetriebe unter Anhängerlast), Allrad bei Wiese/Feldweg/Stall,
+  Vorhandensein bzw. Nachrüstbarkeit der AHK.
+- Kurzstrecke: Eignung des Antriebs (z. B. Diesel mit Partikelfilter/AdBlue bei viel Kurzstrecke, Steuerkette/Zahnriemen, Batterie),
+  aber auch, ob regelmäßige lange Autobahnfahrten das ausgleichen.
+- Langstrecke: Komfort, Verbrauch, Tankreichweite, Assistenzsysteme.
+- Zuverlässigkeit: bekannte Schwachstellen dieses Modells/Motors/Getriebes bei der aktuellen Laufleistung und unter Anhängerlast,
+  zu erwartende Reparaturen und Unterhaltskosten.
+- Fehlende AHK ist ein deutlicher Abzug; nicht nachrüstbar oder zu geringe Anhängelast macht das Fahrzeug praktisch ungeeignet (Note 1–3).
+Felder: score, verdict (ein Satz), summary (3–5 Sätze), strengths (was für dieses Profil passt), concerns (was dagegen spricht),
+checks (was ihr für euren Einsatzzweck konkret prüfen bzw. fragen solltet, z. B. Anhängelast im Fahrzeugschein, Probefahrt mit Last).`;
+
+function fitTaskPrompt(profile: string) {
+  return `Nutzungsprofil der Käufer (in eigenen Worten):
+"""
+${profile}
+"""
+
+Ergänze im Feld "evaluation" zusätzlich das Feld "personal_fit".
+${FIT_GUIDE}`;
+}
+
+async function loadProfile(admin: SupabaseClient, userId: string): Promise<string | null> {
+  const { data } = await admin.from("profiles").select("profile_text").eq("user_id", userId).maybeSingle();
+  const t = (data?.profile_text ?? "").trim();
+  return t || null;
+}
+
+// Nur Eignung bewerten – auf Basis der bereits extrahierten Daten und der vorhandenen Bewertung
+async function assessFit(car: Record<string, unknown>, profile: string): Promise<PersonalFit> {
+  const evaluation = { ...(car.evaluation as Record<string, unknown>) };
+  delete evaluation.personal_fit;
+  const content: ContentPart[] = [
+    {
+      type: "text",
+      text: `Fahrzeugdaten (bereits aus der Anzeige extrahiert):
+${JSON.stringify(car.vehicle)}
+
+Bisherige Experten-Einschätzung des Angebots:
+${JSON.stringify(evaluation)}
+
+Nutzungsprofil der Käufer (in eigenen Worten):
+"""
+${profile}
+"""
+
+Aufgabe: Bewerte NUR die persönliche Eignung dieses Fahrzeugs für dieses Nutzungsprofil.
+${FIT_GUIDE}
+
+Antworte AUSSCHLIESSLICH mit einem einzigen JSON-Objekt (ohne Markdown), das exakt diesem JSON-Schema entspricht:
+${JSON.stringify(PERSONAL_FIT_SCHEMA)}`,
+    },
+  ];
+  const ask = Deno.env.get("ANTHROPIC_API_KEY") ? askAnthropic : askOpenRouter;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const raw = await ask(content);
+    const fit = normalizeFit(extractJson(raw));
+    if (fit) return fit;
+  }
+  throw new Error("Antwort der KI war kein gültiges JSON");
+}
+
+function extractJson(raw: string): unknown {
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeFit(x: unknown): PersonalFit | null {
+  if (!x || typeof x !== "object") return null;
+  const f = x as Record<string, unknown>;
+  if (f.score == null || typeof f.verdict !== "string") return null;
+  const arr = (v: unknown) => (Array.isArray(v) ? v.filter((i) => typeof i === "string") as string[] : []);
+  return {
+    score: Math.min(10, Math.max(1, Math.round(Number(f.score) || 5))),
+    verdict: f.verdict,
+    summary: typeof f.summary === "string" ? f.summary : "",
+    strengths: arr(f.strengths),
+    concerns: arr(f.concerns),
+    checks: arr(f.checks),
+  };
+}
+
 type Analysis = {
   vehicle: {
     title: string; make: string | null; model: string | null; variant: string | null;
@@ -477,9 +623,11 @@ type Analysis = {
 
 // Das Schema wird als Vorgabe im Prompt mitgegeben (kein "strict"-Modus: dafür ist es zu umfangreich)
 // und die Antwort hier geprüft/ergänzt.
-const JSON_INSTRUCTIONS = `Antworte AUSSCHLIESSLICH mit einem einzigen JSON-Objekt (ohne Markdown, ohne Text davor oder danach),
+function jsonInstructions(withFit: boolean) {
+  return `Antworte AUSSCHLIESSLICH mit einem einzigen JSON-Objekt (ohne Markdown, ohne Text davor oder danach),
 das exakt diesem JSON-Schema entspricht:
-${JSON.stringify(OUTPUT_SCHEMA)}`;
+${JSON.stringify(withFit ? schemaWithFit() : OUTPUT_SCHEMA)}`;
+}
 
 class ParseError extends Error {}
 
@@ -508,6 +656,11 @@ function parseJson(raw: string): Analysis {
     (e.tow_hitch as Record<string, unknown>).status = "unklar";
   }
   if (!Array.isArray((parsed.vehicle as Record<string, unknown>).equipment)) parsed.vehicle.equipment = [];
+  if (e.personal_fit !== undefined) {
+    const fit = normalizeFit(e.personal_fit);
+    if (fit) e.personal_fit = fit;
+    else delete e.personal_fit;
+  }
   // "" bzw. "unbekannt" -> null, damit die App einheitlich "unbekannt" anzeigt
   const v = parsed.vehicle as Record<string, unknown>;
   for (const f of TEXT_FIELDS) {
@@ -518,14 +671,14 @@ function parseJson(raw: string): Analysis {
   return parsed;
 }
 
-async function askClaude(content: ContentPart[]): Promise<Analysis> {
+async function askClaude(content: ContentPart[], withFit: boolean): Promise<Analysis> {
   const ask = Deno.env.get("ANTHROPIC_API_KEY")
     ? askAnthropic
     : Deno.env.get("OPENROUTER_API_KEY")
     ? askOpenRouter
     : null;
   if (!ask) throw new UserFacingError("Kein KI-Schlüssel hinterlegt: ANTHROPIC_API_KEY in den Supabase-Secrets eintragen.");
-  const full: ContentPart[] = [...content, { type: "text", text: JSON_INSTRUCTIONS }];
+  const full: ContentPart[] = [...content, { type: "text", text: jsonInstructions(withFit) }];
   try {
     return parseJson(await ask(full));
   } catch (e) {

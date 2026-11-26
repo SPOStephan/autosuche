@@ -5,6 +5,7 @@ import { supabase } from "./lib/supabase";
 import Login from "./pages/Login";
 import Home from "./pages/Home";
 import CarDetail from "./pages/CarDetail";
+import Profile from "./pages/Profile";
 
 export default function App() {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
@@ -22,6 +23,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<Home userId={session.user.id} />} />
       <Route path="/auto/:id" element={<CarDetail />} />
+      <Route path="/profil" element={<Profile userId={session.user.id} />} />
     </Routes>
   );
 }

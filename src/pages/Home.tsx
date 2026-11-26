@@ -6,18 +6,33 @@ import CarMap from "../components/CarMap";
 import CarListItem from "../components/CarListItem";
 import type { Car } from "../lib/types";
 import { fillMissingLocations } from "../lib/geocode";
+import { assessMany, loadProfileText } from "../lib/fit";
+import { Link } from "react-router-dom";
 
-type SortKey = "neu" | "note" | "preis" | "km";
+type SortKey = "neu" | "note" | "eignung" | "preis" | "km";
 
 const sorters: Record<SortKey, (a: Car, b: Car) => number> = {
   neu: (a, b) => b.created_at.localeCompare(a.created_at),
   note: (a, b) => (b.evaluation?.score ?? -1) - (a.evaluation?.score ?? -1),
+  eignung: (a, b) => (b.fit_score ?? -1) - (a.fit_score ?? -1),
   preis: (a, b) => (a.price_eur ?? Infinity) - (b.price_eur ?? Infinity),
   km: (a, b) => (a.mileage_km ?? Infinity) - (b.mileage_km ?? Infinity),
 };
 
 export default function Home({ userId }: { userId: string }) {
   const { cars, loading } = useCars();
+
+  const [hasProfile, setHasProfile] = useState(false);
+  const [fitProgress, setFitProgress] = useState<{ done: number; total: number; failed: number } | null>(null);
+  useEffect(() => {
+    loadProfileText().then((t) => setHasProfile(!!t.trim()));
+  }, []);
+  const missingFit = cars.filter((c) => c.status === "done" && c.fit_score == null);
+
+  async function rateMissing() {
+    await assessMany(missingFit, (done, total, failed) => setFitProgress({ done, total, failed }));
+    setTimeout(() => setFitProgress(null), 4000);
+  }
 
   // Fehlende Standorte im Browser nachtragen
   useEffect(() => {
@@ -48,13 +63,32 @@ export default function Home({ userId }: { userId: string }) {
           <h1 className="text-lg font-semibold flex items-center gap-2">
             <img src="/car.svg" alt="" className="w-6 h-6" /> Autosuche
           </h1>
-          <button onClick={() => supabase.auth.signOut()} className="text-xs text-slate-500 hover:text-slate-800">
-            Abmelden
-          </button>
+          <div className="flex items-center gap-3 text-xs">
+            <Link to="/profil" className="text-blue-700 hover:underline">Unser Profil</Link>
+            <button onClick={() => supabase.auth.signOut()} className="text-slate-500 hover:text-slate-800">
+              Abmelden
+            </button>
+          </div>
         </header>
         <div className="p-4 pb-2">
           <AddListing userId={userId} />
         </div>
+        {fitProgress ? (
+          <div className="mx-4 mb-2 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800">
+            Eignung wird bewertet: {fitProgress.done} von {fitProgress.total}
+            {fitProgress.failed > 0 && <span className="text-red-600"> · {fitProgress.failed} fehlgeschlagen</span>}
+            {fitProgress.done === fitProgress.total && " – fertig"}
+          </div>
+        ) : hasProfile && missingFit.length > 0 ? (
+          <div className="mx-4 mb-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-900 flex items-center gap-2">
+            <span className="flex-1">{missingFit.length} Fahrzeug(e) noch ohne Eignungsnote.</span>
+            <button onClick={rateMissing} className="rounded bg-amber-600 text-white px-2 py-1 font-medium">Jetzt bewerten</button>
+          </div>
+        ) : !hasProfile && cars.length > 0 ? (
+          <div className="mx-4 mb-2 rounded-lg bg-slate-100 px-3 py-2 text-xs text-slate-700">
+            Für die Note „Eignung für uns“ bitte zuerst <Link to="/profil" className="text-blue-700 underline">euer Profil</Link> eintragen.
+          </div>
+        ) : null}
         <div className="flex items-center gap-2 px-4 py-1 text-xs text-slate-600">
           <span>{shown.length} Fahrzeuge</span>
           <span className="flex-1" />
@@ -73,7 +107,8 @@ export default function Home({ userId }: { userId: string }) {
           </label>
           <select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} className="border rounded px-1 py-0.5 bg-white">
             <option value="neu">Neueste</option>
-            <option value="note">Beste KI-Note</option>
+            <option value="note">Beste Angebotsnote</option>
+            <option value="eignung">Beste Eignung</option>
             <option value="preis">Preis ↑</option>
             <option value="km">Kilometer ↑</option>
           </select>

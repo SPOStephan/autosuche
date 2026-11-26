@@ -11,6 +11,15 @@ export type TowHitch = {
   notes: string;
 };
 
+export type PersonalFit = {
+  score: number;
+  verdict: string;
+  summary: string;
+  strengths: string[];
+  concerns: string[];
+  checks: string[];
+};
+
 export type Evaluation = {
   score: number;
   verdict: string;
@@ -24,6 +33,7 @@ export type Evaluation = {
   red_flags: string[];
   documents_to_check: string[];
   tow_hitch?: TowHitch;
+  personal_fit?: PersonalFit;
 };
 
 export type Vehicle = {
@@ -82,4 +92,5 @@ export type Car = {
   notes: string | null;
   favorite: boolean;
   tow_hitch: TowHitchStatus | null;
+  fit_score: number | null;
 };

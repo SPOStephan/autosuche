@@ -20,9 +20,20 @@ export default function CarListItem({ car, onHover }: { car: Car; onHover?: (id:
             {car.title ?? "Unbenannt"}
           </div>
           {car.status === "done" && car.evaluation && (
-            <span className={`shrink-0 text-white text-xs font-bold rounded-md px-1.5 py-0.5 ${scoreColor(car.evaluation.score)}`}>
-              {car.evaluation.score}
-            </span>
+            <div className="shrink-0 flex gap-1 text-center">
+              <div title="Angebot (objektiv)">
+                <div className={`text-white text-xs font-bold rounded-md px-1.5 py-0.5 ${scoreColor(car.evaluation.score)}`}>
+                  {car.evaluation.score}
+                </div>
+                <div className="text-[9px] text-slate-400 leading-tight mt-0.5">Angebot</div>
+              </div>
+              <div title="Eignung für uns">
+                <div className={`text-white text-xs font-bold rounded-md px-1.5 py-0.5 ${scoreColor(car.fit_score)}`}>
+                  {car.fit_score ?? "–"}
+                </div>
+                <div className="text-[9px] text-slate-400 leading-tight mt-0.5">Eignung</div>
+              </div>
+            </div>
           )}
         </div>
         {car.status === "processing" && <div className="text-xs text-blue-700 mt-1 animate-pulse">KI analysiert …</div>}

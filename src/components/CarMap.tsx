@@ -61,7 +61,11 @@ export default function CarMap({ cars, focusId }: { cars: Car[]; focusId?: strin
             <div>
               {euro(car.price_eur)} · {km(car.mileage_km)} · {car.first_registration ?? "–"}
             </div>
-            {car.evaluation && <div>KI-Note: {car.evaluation.score}/10</div>}
+            {car.evaluation && (
+              <div>
+                Angebot: {car.evaluation.score}/10 · Eignung für uns: {car.fit_score != null ? `${car.fit_score}/10` : "–"}
+              </div>
+            )}
             {towHitchInfo(car.tow_hitch) && <div>{towHitchInfo(car.tow_hitch)!.label}</div>}
           </Tooltip>
         </Marker>

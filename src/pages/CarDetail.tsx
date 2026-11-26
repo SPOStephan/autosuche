@@ -5,6 +5,7 @@ import L from "leaflet";
 import { supabase } from "../lib/supabase";
 import { useCar } from "../lib/useCars";
 import { euro, km, scoreColor, towHitchInfo } from "../lib/format";
+import { assessFit } from "../lib/fit";
 import type { Car } from "../lib/types";
 
 const pin = L.divIcon({
@@ -90,6 +91,7 @@ export default function CarDetail() {
   const { car, loading, setCar } = useCar(id);
   const [notes, setNotes] = useState("");
   const [saved, setSaved] = useState(true);
+  const [fitBusy, setFitBusy] = useState(false);
 
   useEffect(() => {
     if (car) setNotes(car.notes ?? "");
@@ -111,6 +113,17 @@ export default function CarDetail() {
     setCar({ ...car!, status: "processing", error: null });
     const { error } = await supabase.functions.invoke("analyze-listing", { body: { id: car!.id } });
     if (error) alert(error.message);
+  }
+
+  async function rateFit() {
+    setFitBusy(true);
+    try {
+      await assessFit(car!.id);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setFitBusy(false);
+    }
   }
 
   async function remove() {
@@ -187,16 +200,66 @@ export default function CarDetail() {
 
       {e && (
         <>
-          <section className="bg-white rounded-xl border border-slate-200 p-4 flex gap-4 items-start">
-            <div className={`shrink-0 w-16 h-16 rounded-xl text-white flex flex-col items-center justify-center ${scoreColor(e.score)}`}>
-              <div className="text-2xl font-bold leading-none">{e.score}</div>
-              <div className="text-[10px] opacity-80">von 10</div>
-            </div>
-            <div>
-              <div className="font-semibold">{e.verdict}</div>
-              <p className="text-sm text-slate-700 mt-1">{e.summary}</p>
-            </div>
-          </section>
+          <div className="grid md:grid-cols-2 gap-4">
+            <section className="bg-white rounded-xl border border-slate-200 p-4 flex gap-4 items-start">
+              <div className={`shrink-0 w-16 h-16 rounded-xl text-white flex flex-col items-center justify-center ${scoreColor(e.score)}`}>
+                <div className="text-2xl font-bold leading-none">{e.score}</div>
+                <div className="text-[10px] opacity-80">von 10</div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-slate-400">Angebot (objektiv)</div>
+                <div className="font-semibold">{e.verdict}</div>
+                <p className="text-sm text-slate-700 mt-1">{e.summary}</p>
+              </div>
+            </section>
+            <section className="bg-white rounded-xl border-2 border-blue-200 p-4 flex gap-4 items-start">
+              <div className={`shrink-0 w-16 h-16 rounded-xl text-white flex flex-col items-center justify-center ${scoreColor(e.personal_fit?.score)}`}>
+                <div className="text-2xl font-bold leading-none">{e.personal_fit?.score ?? "–"}</div>
+                <div className="text-[10px] opacity-80">von 10</div>
+              </div>
+              <div className="min-w-0">
+                <div className="text-[11px] uppercase tracking-wide text-slate-400">Eignung für uns</div>
+                {e.personal_fit ? (
+                  <>
+                    <div className="font-semibold">{e.personal_fit.verdict}</div>
+                    <p className="text-sm text-slate-700 mt-1">{e.personal_fit.summary}</p>
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-500 mt-1">
+                    Noch nicht bewertet. <Link to="/profil" className="text-blue-700 underline">Profil</Link> prüfen und dann bewerten.
+                  </p>
+                )}
+                <button
+                  onClick={rateFit}
+                  disabled={fitBusy || car.status !== "done"}
+                  className="mt-2 text-xs text-blue-700 hover:underline disabled:opacity-40"
+                >
+                  {fitBusy ? "Wird bewertet … (ca. 1 Min.)" : e.personal_fit ? "↻ Eignung neu bewerten" : "Eignung jetzt bewerten"}
+                </button>
+              </div>
+            </section>
+          </div>
+
+          {e.personal_fit && (
+            <Section title="🐴 Passt es zu uns?">
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <div className="text-sm font-medium mb-1">Spricht dafür</div>
+                  <Bullets items={e.personal_fit.strengths} icon="✓" />
+                </div>
+                <div>
+                  <div className="text-sm font-medium mb-1">Spricht dagegen</div>
+                  <Bullets items={e.personal_fit.concerns} icon="✗" />
+                </div>
+              </div>
+              {e.personal_fit.checks.length > 0 && (
+                <div className="mt-3">
+                  <div className="text-sm font-medium mb-1">Für euren Einsatz konkret prüfen</div>
+                  <Bullets items={e.personal_fit.checks} icon="→" />
+                </div>
+              )}
+            </Section>
+          )}
 
           {e.tow_hitch && (() => {
             const t = e.tow_hitch;
