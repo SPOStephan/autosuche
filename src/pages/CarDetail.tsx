@@ -92,6 +92,8 @@ export default function CarDetail() {
   const [notes, setNotes] = useState("");
   const [saved, setSaved] = useState(true);
   const [fitBusy, setFitBusy] = useState(false);
+  const [editingUrl, setEditingUrl] = useState(false);
+  const [urlDraft, setUrlDraft] = useState("");
 
   useEffect(() => {
     if (car) setNotes(car.notes ?? "");
@@ -176,13 +178,50 @@ export default function CarDetail() {
             <Fact label="Verkäufer" value={[v?.seller_type, v?.seller_name].filter(Boolean).join(" · ") || null} />
             <Fact label="Standort" value={[car.zip, car.city].filter(Boolean).join(" ") || null} />
           </div>
-          <div className="flex flex-wrap gap-2 pt-1">
-            {car.url && (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {car.url && !editingUrl && (
               <a href={car.url} target="_blank" rel="noreferrer" className="rounded-lg bg-blue-700 text-white px-3 py-1.5 text-sm font-medium">
-                Zur Anzeige ↗
+                {/mobile\.de/i.test(car.url) ? "Zur mobile.de-Anzeige ↗" : /autoscout24/i.test(car.url) ? "Zur autoscout24-Anzeige ↗" : "Zur Anzeige ↗"}
               </a>
             )}
-            {car.pdf_path && (
+            {!editingUrl && (
+              <button
+                onClick={() => { setUrlDraft(car.url ?? ""); setEditingUrl(true); }}
+                title={car.url ? "Link zur Anzeige ändern" : "Link zur Anzeige hinzufügen"}
+                className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm hover:bg-slate-50"
+              >
+                ✏️{!car.url && " Link zur Anzeige hinzufügen"}
+              </button>
+            )}
+            {editingUrl && (
+              <form
+                className="flex w-full gap-2"
+                onSubmit={async (ev) => {
+                  ev.preventDefault();
+                  const v = urlDraft.trim();
+                  if (v && !/^https?:\/\//i.test(v)) {
+                    alert("Bitte einen vollständigen Link einfügen (beginnt mit https://).");
+                    return;
+                  }
+                  await update({ url: v || null });
+                  setEditingUrl(false);
+                }}
+              >
+                <input
+                  autoFocus
+                  type="url"
+                  value={urlDraft}
+                  onChange={(ev) => setUrlDraft(ev.target.value)}
+                  placeholder="https://suchen.mobile.de/…"
+                  className="flex-1 min-w-0 rounded-lg border border-slate-300 px-3 py-1.5 text-sm"
+                />
+                <button className="rounded-lg bg-blue-700 text-white px-3 py-1.5 text-sm font-medium">Speichern</button>
+                <button type="button" onClick={() => setEditingUrl(false)} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm">
+                  Abbrechen
+                </button>
+              </form>
+            )}
+            {car.pdf_path && !editingUrl && (
               <button onClick={openPdf} className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm">📄 PDF öffnen</button>
             )}
           </div>
