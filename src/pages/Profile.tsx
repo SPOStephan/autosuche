@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { loadProfileText, saveProfileText, assessMany } from "../lib/fit";
 import { useCars } from "../lib/useCars";
 
-export default function Profile({ userId }: { userId: string }) {
+export default function Profile() {
   const [text, setText] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [saved, setSaved] = useState<string | null>(null);
@@ -19,13 +19,13 @@ export default function Profile({ userId }: { userId: string }) {
   }, []);
 
   async function save() {
-    await saveProfileText(userId, text.trim());
+    await saveProfileText(text.trim());
     setSaved("Gespeichert. Neue Fahrzeuge werden ab sofort nach diesem Profil bewertet.");
   }
 
   async function rateAll() {
     if (!confirm(`Eignung für alle ${doneCars.length} Fahrzeuge neu bewerten? Das kostet pro Fahrzeug ein paar Cent und dauert etwas.`)) return;
-    await saveProfileText(userId, text.trim());
+    await saveProfileText(text.trim());
     await assessMany(doneCars, (done, total, failed) => setProgress({ done, total, failed }));
   }
 
@@ -34,7 +34,7 @@ export default function Profile({ userId }: { userId: string }) {
       <Link to="/" className="text-sm text-blue-700 hover:underline">← Zur Karte</Link>
       <h1 className="text-xl font-semibold">Unser Profil</h1>
       <p className="text-sm text-slate-600">
-        Beschreibt in eigenen Worten, wofür ihr das Auto braucht. Daraus bildet die KI die zweite Note
+        Das Profil gilt gemeinsam für alle, die die App nutzen. Beschreibt in eigenen Worten, wofür ihr das Auto braucht. Daraus bildet die KI die zweite Note
         <b> „Eignung für uns“</b> – unabhängig davon, ob das Angebot preislich gut ist.
       </p>
       <textarea

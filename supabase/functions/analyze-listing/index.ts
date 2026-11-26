@@ -59,6 +59,10 @@ Deno.serve(async (req) => {
   if (userErr || !userData.user) return json({ error: "Nicht angemeldet" }, 401);
   const userId = userData.user.id;
 
+  // Nur Mitglieder (Tabelle members) dürfen die App nutzen
+  const { data: member } = await admin.from("members").select("user_id").eq("user_id", userId).maybeSingle();
+  if (!member) return json({ error: "Kein Zugriff – dieses Konto ist nicht freigeschaltet" }, 403);
+
   let body: { id?: string; url?: string; pdf_path?: string; image_path?: string; fit_only?: boolean };
   try {
     body = await req.json();
@@ -70,11 +74,11 @@ Deno.serve(async (req) => {
 
   if (body.id && body.fit_only) {
     const { data: car, error } = await admin.from("cars").select("*").eq("id", body.id).single();
-    if (error || !car || car.user_id !== userId) return json({ error: "Nicht gefunden" }, 404);
+    if (error || !car) return json({ error: "Nicht gefunden" }, 404);
     if (car.status !== "done" || !car.vehicle || !car.evaluation) {
       return json({ error: "Fahrzeug ist noch nicht fertig analysiert" }, 409);
     }
-    const profile = await loadProfile(admin, userId);
+    const profile = await loadProfile(admin);
     if (!profile) return json({ error: "Kein Nutzungsprofil hinterlegt" }, 400);
     try {
       const fit = await assessFit(car, profile);
@@ -89,8 +93,8 @@ Deno.serve(async (req) => {
 
   if (body.id) {
     const { data: car, error } = await admin
-      .from("cars").select("id, user_id").eq("id", body.id).single();
-    if (error || !car || car.user_id !== userId) return json({ error: "Nicht gefunden" }, 404);
+      .from("cars").select("id").eq("id", body.id).single();
+    if (error || !car) return json({ error: "Nicht gefunden" }, 404);
     await admin.from("cars").update({ status: "processing", error: null }).eq("id", car.id);
     carId = car.id;
   } else {
@@ -175,7 +179,7 @@ async function processCar(admin: SupabaseClient, carId: string, userId: string) 
     throw new UserFacingError("Weder Link noch PDF vorhanden.");
   }
 
-  const profile = await loadProfile(admin, userId);
+  const profile = await loadProfile(admin);
   content.push({ type: "text", text: TASK_PROMPT });
   if (profile) content.push({ type: "text", text: fitTaskPrompt(profile) });
 
@@ -558,8 +562,9 @@ Ergänze im Feld "evaluation" zusätzlich das Feld "personal_fit".
 ${FIT_GUIDE}`;
 }
 
-async function loadProfile(admin: SupabaseClient, userId: string): Promise<string | null> {
-  const { data } = await admin.from("profiles").select("profile_text").eq("user_id", userId).maybeSingle();
+// Gemeinsames Nutzungsprofil aller Mitglieder
+async function loadProfile(admin: SupabaseClient): Promise<string | null> {
+  const { data } = await admin.from("shared_settings").select("profile_text").eq("id", 1).maybeSingle();
   const t = (data?.profile_text ?? "").trim();
   return t || null;
 }

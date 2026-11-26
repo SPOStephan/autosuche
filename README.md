@@ -31,7 +31,9 @@ Link und PDF können zusammen angegeben werden (dann gibt es auch den „Zur Anz
    Alternative: `OPENROUTER_API_KEY` (openrouter.ai), optional `OPENROUTER_MODEL`.
    Ist `ANTHROPIC_API_KEY` gesetzt, wird immer Anthropic direkt genutzt.
 2. **Login anlegen:** Dashboard → Authentication → Users → *Add user* (E-Mail + Passwort,
-   „Auto Confirm“ anhaken).
+   „Auto Confirm“ anhaken). Danach das Konto freischalten (SQL Editor):
+   `insert into public.members (user_id) select id from auth.users where email = '…';`
+   Alle freigeschalteten Konten sehen und bearbeiten dieselben Fahrzeuge und dasselbe Profil.
 3. **Registrierung sperren:** Authentication → Sign In / Providers → *Allow new users to sign up* aus.
 4. **Vercel:** Projekt aus diesem Repo importieren (Framework: Vite). Umgebungsvariablen sind in
    `.env.production` bereits enthalten (nur öffentliche Werte).

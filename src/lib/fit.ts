@@ -1,13 +1,14 @@
 import { supabase } from "./supabase";
 import type { Car } from "./types";
 
+// Gemeinsames Profil (eine Zeile für alle Mitglieder)
 export async function loadProfileText(): Promise<string> {
-  const { data } = await supabase.from("profiles").select("profile_text").maybeSingle();
+  const { data } = await supabase.from("shared_settings").select("profile_text").eq("id", 1).maybeSingle();
   return data?.profile_text ?? "";
 }
 
-export async function saveProfileText(userId: string, text: string) {
-  const { error } = await supabase.from("profiles").upsert({ user_id: userId, profile_text: text });
+export async function saveProfileText(text: string) {
+  const { error } = await supabase.from("shared_settings").upsert({ id: 1, profile_text: text });
   if (error) throw error;
 }
 

@@ -81,3 +81,60 @@ create policy "own profile insert" on public.profiles for insert to authenticate
 create policy "own profile update" on public.profiles for update to authenticated using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
 create trigger profiles_touch before update on public.profiles
 for each row execute function public.touch_updated_at();
+
+-- Gemeinsamer Zugriff für Mitglieder (ersetzt die "own ..."-Policies und die Tabelle profiles)
+create table public.members (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  added_at timestamptz not null default now()
+);
+alter table public.members enable row level security;
+create policy "members read members" on public.members for select to authenticated
+  using (exists (select 1 from public.members m where m.user_id = (select auth.uid())));
+
+create or replace function public.is_member() returns boolean
+language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.members where user_id = (select auth.uid()));
+$$;
+revoke all on function public.is_member() from public, anon;
+grant execute on function public.is_member() to authenticated;
+
+drop policy "own cars select" on public.cars;
+drop policy "own cars insert" on public.cars;
+drop policy "own cars update" on public.cars;
+drop policy "own cars delete" on public.cars;
+create policy "members select cars" on public.cars for select to authenticated using ((select public.is_member()));
+create policy "members insert cars" on public.cars for insert to authenticated with check ((select public.is_member()));
+create policy "members update cars" on public.cars for update to authenticated using ((select public.is_member())) with check ((select public.is_member()));
+create policy "members delete cars" on public.cars for delete to authenticated using ((select public.is_member()));
+
+create table public.shared_settings (
+  id smallint primary key default 1 check (id = 1),
+  profile_text text not null default '',
+  updated_at timestamptz not null default now()
+);
+alter table public.shared_settings enable row level security;
+create policy "members select settings" on public.shared_settings for select to authenticated using ((select public.is_member()));
+create policy "members insert settings" on public.shared_settings for insert to authenticated with check ((select public.is_member()));
+create policy "members update settings" on public.shared_settings for update to authenticated using ((select public.is_member())) with check ((select public.is_member()));
+create trigger shared_settings_touch before update on public.shared_settings
+for each row execute function public.touch_updated_at();
+drop table public.profiles;
+
+drop policy "own listings read" on storage.objects;
+drop policy "own listings write" on storage.objects;
+drop policy "own listings delete" on storage.objects;
+drop policy "own images write" on storage.objects;
+drop policy "own images delete" on storage.objects;
+create policy "members listings read" on storage.objects for select to authenticated
+  using (bucket_id = 'listings' and (select public.is_member()));
+create policy "members listings write" on storage.objects for insert to authenticated
+  with check (bucket_id = 'listings' and (select public.is_member()) and (storage.foldername(name))[1] = (select auth.uid())::text);
+create policy "members listings delete" on storage.objects for delete to authenticated
+  using (bucket_id = 'listings' and (select public.is_member()));
+create policy "members images write" on storage.objects for insert to authenticated
+  with check (bucket_id = 'car-images' and (select public.is_member()) and (storage.foldername(name))[1] = (select auth.uid())::text);
+create policy "members images delete" on storage.objects for delete to authenticated
+  using (bucket_id = 'car-images' and (select public.is_member()));
+
+-- Neues Mitglied freischalten (nachdem das Konto unter Authentication → Users angelegt wurde):
+-- insert into public.members (user_id) select id from auth.users where email = 'neue@adresse.de';
